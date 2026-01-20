@@ -66,6 +66,15 @@ class ActivityBreakdownService {
 
       console.log(`   📊 Enrolled: ${users.length} students`);
 
+      // ✅ NEW: Fetch course groups
+      let courseGroups = [];
+      try {
+        courseGroups = await moodleService.getCourseGroups(moodleToken, courseId);
+        console.log(`   👥 Groups: ${courseGroups.length} found`);
+      } catch (err) {
+        console.warn(`   ⚠️  Could not fetch groups: ${err.message}`);
+      }
+
       const ranges = this.getEmptyRanges();
 
       // Handle empty course
@@ -77,6 +86,7 @@ class ActivityBreakdownService {
           shortname: '',
           totalEnrolled: 0,
           totalActivitiesWithCompletion: 0,
+          groups: courseGroups.map(g => ({ id: g.id, name: g.name })), // ✅ NEW
           completionRanges: ranges
         };
       }
@@ -174,6 +184,7 @@ class ActivityBreakdownService {
         courseName,
         totalEnrolled: users.length,
         totalActivitiesWithCompletion,
+        groups: courseGroups.map(g => ({ id: g.id, name: g.name })), // ✅ NEW
         completionRanges: ranges
       };
 

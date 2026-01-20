@@ -143,7 +143,16 @@ class MoodleService {
       { courseid: courseId, userid: userId }
     );
   }
+// services/moodleService.js च्या शेवटी add कर (line 192 नंतर)
 
+/**
+ * Get course groups (2025, 2026, etc.)
+ */
+async getCourseGroups(token, courseId) {
+  return await this.callMoodleAPI(token, 'core_group_get_course_groups', {
+    courseid: courseId
+  });
+}
   /**
    * Get course contents (sections, modules, etc)
    */
