@@ -143,16 +143,7 @@ class MoodleService {
       { courseid: courseId, userid: userId }
     );
   }
-// services/moodleService.js च्या शेवटी add कर (line 192 नंतर)
 
-/**
- * Get course groups (2025, 2026, etc.)
- */
-async getCourseGroups(token, courseId) {
-  return await this.callMoodleAPI(token, 'core_group_get_course_groups', {
-    courseid: courseId
-  });
-}
   /**
    * Get course contents (sections, modules, etc)
    */
@@ -205,6 +196,87 @@ async getCourseGroups(token, courseId) {
       quizid: quizId,
       userid: userId
     });
+  }
+
+  /**
+   * Get course groups (2025, 2026, etc.)
+   */
+  async getCourseGroups(token, courseId) {
+    return await this.callMoodleAPI(token, 'core_group_get_course_groups', {
+      courseid: courseId
+    });
+  }
+
+  /**
+   * ✅ NEW: Get login logs for analytics
+   * Uses course access as proxy for login activity
+   */
+  async getLoginLogs(token, fromTimestamp, toTimestamp) {
+    try {
+      console.log(`[MOODLE] Fetching login logs from ${fromTimestamp} to ${toTimestamp}`);
+      
+      // Get site info and user courses
+      const siteInfo = await this.getSiteInfo(token);
+      const courses = await this.getUserCourses(token, siteInfo.userid);
+      
+      console.log(`[MOODLE] Found ${courses.length} courses to check for activity`);
+      
+      // Collect login events from enrolled users across all courses
+      const loginEventsMap = new Map();
+      
+      for (const course of courses) {
+        try {
+          const enrolledUsers = await this.getEnrolledUsers(token, course.id);
+          
+          enrolledUsers.forEach(user => {
+            // Only count users who accessed during the time range
+            if (user.lastaccess >= fromTimestamp && user.lastaccess <= toTimestamp) {
+              const eventKey = `${user.id}_${user.lastaccess}`;
+              
+              if (!loginEventsMap.has(eventKey)) {
+                loginEventsMap.set(eventKey, {
+                  userid: user.id,
+                  timecreated: user.lastaccess,
+                  action: 'courseaccess'
+                });
+              }
+            }
+          });
+        } catch (err) {
+          console.warn(`[MOODLE] Could not fetch users for course ${course.id}: ${err.message}`);
+        }
+      }
+      
+      const loginEvents = Array.from(loginEventsMap.values());
+      console.log(`[MOODLE] ✅ Found ${loginEvents.length} login events from course access`);
+      
+      return loginEvents;
+      
+    } catch (error) {
+      console.error('[MOODLE ERROR] getLoginLogs failed:', error.message);
+      return [];
+    }
+  }
+
+  /**
+   * ✅ NEW: Get user enrollments
+   */
+  async getUserEnrollments(token, userId) {
+    try {
+      const courses = await this.getUserCourses(token, userId);
+      
+      return courses.map(course => ({
+        id: course.id,
+        courseid: course.id,
+        userid: userId,
+        timecreated: course.timecreated || course.startdate || 0,
+        timemodified: course.timemodified || 0
+      }));
+      
+    } catch (error) {
+      console.error('[MOODLE ERROR] getUserEnrollments failed:', error.message);
+      return [];
+    }
   }
 }
 

@@ -1,4 +1,9 @@
-// services/consistentAccessService.js - FIXED WITH ALTERNATIVE APPROACH
+// services/consistentAccessService.js
+// 
+// NOTE: This service does NOT track authentication logins.
+// Login metrics are handled in routes/analytics.js using Moodle login logs.
+// This service tracks course access and learning activity consistency only.
+//
 const moodleService = require('./moodleService');
 
 class ConsistentAccessService {
@@ -71,8 +76,7 @@ class ConsistentAccessService {
   }
 
   /**
-   * ALTERNATIVE METHOD: Get consistent access data using course enrollments
-   * This works when core_user_get_user_actions is not available
+   * ✅ UPDATED: Get consistent access data with UNIQUE USERS tracking
    */
   async getConsistentAccessData(moodleToken, userId, dateRange, startDate, endDate) {
     try {
@@ -83,9 +87,13 @@ class ConsistentAccessService {
       const daysInRange = Math.ceil((range.to - range.from) / (24 * 60 * 60));
 
       console.log(`[CONSISTENT ACCESS] Fetching data for ${daysInRange} days`);
+      console.log(`[CONSISTENT ACCESS] From: ${new Date(range.from * 1000).toISOString()}`);
+      console.log(`[CONSISTENT ACCESS] To: ${new Date(range.to * 1000).toISOString()}`);
 
-      // Method 1: Try to get all site users
+      // Get all site users
       let allUsers = [];
+      // NOTE: Login events NOT tracked here - see routes/analytics.js for real login data
+      
       try {
         const siteInfo = await moodleService.getSiteInfo(moodleToken);
         
@@ -111,6 +119,7 @@ class ConsistentAccessService {
                   email: user.email || '',
                   lastaccess: user.lastaccess || 0,
                   courses: []
+                  // NOTE: loginCount removed - not tracking authentication logins
                 });
               }
               
@@ -132,7 +141,6 @@ class ConsistentAccessService {
 
       } catch (error) {
         console.error('[CONSISTENT ACCESS] Error fetching users:', error.message);
-        // Return empty data structure
         return this.generateEmptyResponse(range, daysInRange);
       }
 
@@ -141,16 +149,15 @@ class ConsistentAccessService {
         return user.lastaccess >= range.from && user.lastaccess <= range.to;
       });
 
-      console.log(`[CONSISTENT ACCESS] Active users in range: ${activeUsers.length}`);
+      console.log(`[CONSISTENT ACCESS] Unique active users in range: ${activeUsers.length}`);
 
-      // Since we don't have exact daily login data, we'll estimate based on course enrollments
-      // Users with recent activity are considered "consistent"
+      // Calculate consistency metrics
       const userLoginDays = {};
 
       activeUsers.forEach(user => {
-        // Estimate login frequency based on number of enrolled courses and last access
+        // Estimate activity days based on enrolled courses
         const estimatedDays = Math.min(
-          user.courses.length, // More courses = more likely to login regularly
+          user.courses.length,
           daysInRange
         );
 
@@ -160,7 +167,7 @@ class ConsistentAccessService {
           fullname: user.fullname,
           email: user.email,
           uniqueDays: estimatedDays,
-          totalLogins: user.courses.length,
+          totalLogins: user.courses.length, // Course access count (NOT auth logins)
           lastaccess: user.lastaccess,
           courses: user.courses
         };
@@ -202,6 +209,15 @@ class ConsistentAccessService {
         });
       }
 
+      // ✅ Calculate course access events (NOT authentication logins)
+      const totalCourseAccessEvents = consistentUsers.reduce((sum, u) => sum + u.totalLogins, 0);
+
+      console.log(`[CONSISTENT ACCESS] Summary:`);
+      console.log(`   Total Users: ${allUsers.length}`);
+      console.log(`   Unique Active Users: ${activeUsers.length}`);
+      console.log(`   Total Course Access Events: ${totalCourseAccessEvents}`);
+      console.log(`   Consistent Users: ${consistentUsers.length}`);
+
       return {
         dateRange: {
           type: dateRange,
@@ -212,14 +228,24 @@ class ConsistentAccessService {
           totalDays: daysInRange
         },
         summary: {
-          totalUniqueUsers: allUsers.length,
-          activeUsers: activeUsers.length,
-          consistentUsers: consistentUsers.length,
-          totalLoginEvents: consistentUsers.reduce((sum, u) => sum + u.totalLogins, 0)
+          totalUniqueUsers: allUsers.length,              // All users in system
+          uniqueLoggedInUsers: activeUsers.length,        // Unique users with activity
+          activeUsers: activeUsers.length,                // Keep for backward compatibility
+          consistentUsers: consistentUsers.length,        // Users with high consistency
+          totalCourseAccessEvents: totalCourseAccessEvents, // Course access count (NOT login events)
+          
+          // ✅ Metrics breakdown (course activity, NOT authentication)
+          metrics: {
+            totalCourseAccess: totalCourseAccessEvents,   // Course access events
+            uniqueUsers: activeUsers.length,              // Unique active users
+            averageAccessPerUser: activeUsers.length > 0 
+              ? Math.round(totalCourseAccessEvents / activeUsers.length * 10) / 10 
+              : 0
+          }
         },
         dayWiseBreakdown: dayWiseArray,
         users: consistentUsers,
-        note: "Data estimated from course enrollments and last access times"
+        note: "Data based on course enrollments and last access times. Metrics show course activity patterns, not authentication login events. For real login data, see analytics dashboard."
       };
 
     } catch (error) {
@@ -252,9 +278,15 @@ class ConsistentAccessService {
       },
       summary: {
         totalUniqueUsers: 0,
+        uniqueLoggedInUsers: 0,
         activeUsers: 0,
         consistentUsers: 0,
-        totalLoginEvents: 0
+        totalCourseAccessEvents: 0,
+        metrics: {
+          totalCourseAccess: 0,
+          uniqueUsers: 0,
+          averageAccessPerUser: 0
+        }
       },
       dayWiseBreakdown: dayWiseArray,
       users: [],

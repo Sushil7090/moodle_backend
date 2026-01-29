@@ -1,4 +1,4 @@
-// routes/analytics.js - FULLY FIXED & PRODUCTION READY
+// routes/analytics.js - MINIMAL FIX FOR UNIQUE USERS
 const express = require('express');
 const moodleService = require('../services/moodleService');
 const { sendSuccess, sendError } = require('../utils/responseHandler');
@@ -68,7 +68,7 @@ function getDateRange(dateRange, fromDateStr, toDateStr) {
 
 /**
  * GET /api/analytics/dashboard
- * FULL FIXED DASHBOARD API
+ * ✅ FIXED: Now correctly tracks total logins AND unique users
  */
 router.get('/dashboard', async (req, res) => {
   try {
@@ -91,20 +91,32 @@ router.get('/dashboard', async (req, res) => {
     // 1️⃣ Get user courses
     const courses = await moodleService.getUserCourses(moodleToken, userId);
 
-    // 2️⃣ REAL Active Users
-    let activeUsers = 0;
+    // 2️⃣ ✅ FIXED: Get REAL login data (not course access)
+    let totalLogins = 0;
+    let uniqueUsers = 0;
+    
     try {
       const loginLogs = await moodleService.getLoginLogs(
         moodleToken,
         range.from,
         range.to
       );
-      activeUsers = [...new Set(loginLogs.map(l => l.userid))].length;
-    } catch {
-      activeUsers = 0;
+      
+      // ✅ Total login events (including repeated logins)
+      totalLogins = loginLogs.length;
+      
+      // ✅ Unique users (deduplicated)
+      uniqueUsers = new Set(loginLogs.map(l => l.userid)).size;
+      
+      console.log(`[ANALYTICS] Total Logins: ${totalLogins}, Unique Users: ${uniqueUsers}`);
+      
+    } catch (error) {
+      console.warn('[ANALYTICS] Login logs unavailable:', error.message);
+      totalLogins = 0;
+      uniqueUsers = 0;
     }
 
-    // 3️⃣ REAL Enrollments (FIXED)
+    // 3️⃣ REAL Enrollments
     let enrollments = [];
     try {
       enrollments = await moodleService.getUserEnrollments(
@@ -145,9 +157,11 @@ router.get('/dashboard', async (req, res) => {
       range.to
     );
 
+    // ✅ FIXED RESPONSE
     sendSuccess(res, {
       overview: {
-        activeUsers,
+        totalLogins,      // ✅ Total login events
+        uniqueUsers,      // ✅ Unique users
         newEnrollments,
         completionRate
       },
@@ -162,7 +176,9 @@ router.get('/dashboard', async (req, res) => {
       dateRange: {
         type: dateRange,
         from: range.from,
-        to: range.to
+        to: range.to,
+        fromDate: new Date(range.from * 1000).toISOString().split('T')[0],
+        toDate: new Date(range.to * 1000).toISOString().split('T')[0]
       }
     }, 'Dashboard data retrieved successfully');
 
