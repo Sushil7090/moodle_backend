@@ -1,39 +1,62 @@
-// services/activityBreakdownService.js
+// services/activityBreakdownService.js - FIXED WITH ALL CRITICAL ISSUES RESOLVED
 const moodleService = require('./moodleService');
 
 class ActivityBreakdownService {
 
-  /* ---------------- HELPER METHODS ---------------- */
+  /* ---------------- HELPER METHODS (FIXED) ---------------- */
 
+  /**
+   * ✅ FIXED: Dynamic activity-based ranges
+   */
   getEmptyRanges() {
     return {
-      '0-20': { count: 0, students: [] },
-      '21-40': { count: 0, students: [] },
-      '41-60': { count: 0, students: [] },
-      '61-80': { count: 0, students: [] },
-      '81-100': { count: 0, students: [] }
+      '0': { count: 0, students: [], label: '0 activities completed' },
+      'low': { count: 0, students: [], label: '1-25% completed' },
+      'mid': { count: 0, students: [], label: '25-50% completed' },
+      'high': { count: 0, students: [], label: '50-75% completed' },
+      'veryhigh': { count: 0, students: [], label: '75-99% completed' },
+      'full': { count: 0, students: [], label: 'All activities completed' }
     };
   }
 
-  getRangeKey(percent) {
-    if (percent <= 20) return '0-20';
-    if (percent <= 40) return '21-40';
-    if (percent <= 60) return '41-60';
-    if (percent <= 80) return '61-80';
-    return '81-100';
+  /**
+   * ✅ FIXED: Dynamic range calculation based on course total
+   * @param {number} completedCount - Activities completed by student
+   * @param {number} courseTotal - Total activities in the course (max across all users)
+   */
+  getRangeKey(completedCount, courseTotal) {
+    // No activities completed
+    if (completedCount === 0) {
+      return '0';
+    }
+    
+    // ✅ FIXED: Check against COURSE total, not user's visible total
+    if (completedCount >= courseTotal && courseTotal > 0) {
+      return 'full';
+    }
+    
+    // ✅ FIXED: Dynamic ranges based on percentage (for logic only)
+    const percentComplete = courseTotal > 0 
+      ? (completedCount / courseTotal) * 100 
+      : 0;
+    
+    if (percentComplete < 25) return 'low';
+    if (percentComplete < 50) return 'mid';
+    if (percentComplete < 75) return 'high';
+    return 'veryhigh';
   }
 
-  addToRange(ranges, percent, student) {
-    const key = this.getRangeKey(percent);
+  /**
+   * ✅ FIXED: Add student with course total reference
+   */
+  addToRange(ranges, completedCount, courseTotal, student) {
+    const key = this.getRangeKey(completedCount, courseTotal);
     ranges[key].students.push(student);
     ranges[key].count++;
   }
 
   /* ---------------- BATCHING HELPER (FOR PERFORMANCE) ---------------- */
 
-  /**
-   * Process users in batches to avoid rate limits
-   */
   async processUsersInBatches(users, batchSize, processFn) {
     const results = [];
     
@@ -42,7 +65,6 @@ class ActivityBreakdownService {
       const batchResults = await Promise.all(batch.map(processFn));
       results.push(...batchResults);
       
-      // Small delay between batches
       if (i + batchSize < users.length) {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
@@ -54,30 +76,18 @@ class ActivityBreakdownService {
   /* ---------------- MAIN LOGIC - SINGLE COURSE ---------------- */
 
   /**
-   * ✅ FIXED: Get completion breakdown for a SINGLE course
-   * Uses completion-enabled activities count (NOT total modules)
+   * ✅ FIXED: Get completion breakdown with all issues resolved
    */
   async getSingleCourseCompletionBreakdown(moodleToken, courseId, courseName) {
     console.log(`\n[COURSE] Processing: ${courseName} (ID: ${courseId})`);
 
     try {
-      // Fetch enrolled users
       const users = await moodleService.getEnrolledUsers(moodleToken, courseId);
 
       console.log(`   📊 Enrolled: ${users.length} students`);
 
-      // ✅ NEW: Fetch course groups
-      let courseGroups = [];
-      try {
-        courseGroups = await moodleService.getCourseGroups(moodleToken, courseId);
-        console.log(`   👥 Groups: ${courseGroups.length} found`);
-      } catch (err) {
-        console.warn(`   ⚠️  Could not fetch groups: ${err.message}`);
-      }
-
       const ranges = this.getEmptyRanges();
 
-      // Handle empty course
       if (!users || users.length === 0) {
         console.log(`   ⚠️  No students enrolled`);
         return {
@@ -86,21 +96,20 @@ class ActivityBreakdownService {
           shortname: '',
           totalEnrolled: 0,
           totalActivitiesWithCompletion: 0,
-          groups: courseGroups.map(g => ({ id: g.id, name: g.name })), // ✅ NEW
           completionRanges: ranges
         };
       }
 
-      // ✅ FIX: Process users in batches (20 at a time) to avoid rate limits
+      // ✅ FIXED: Track MAXIMUM activities across ALL users
       let totalActivitiesWithCompletion = 0;
-      let completionCountsInitialized = false;
+      const userCompletionData = [];
 
+      // First pass: collect all data and find max activities
       await this.processUsersInBatches(
         users,
-        20, // Batch size
+        20,
         async (user) => {
           try {
-            // Get completion status for this student
             const completion = await moodleService.getActivitiesCompletion(
               moodleToken,
               courseId,
@@ -108,54 +117,33 @@ class ActivityBreakdownService {
             );
 
             const statuses = completion.statuses || [];
+            const userVisibleActivities = statuses.length;
             
-            // ✅ FIX: Use completion-enabled activities count
-            const completionEnabledActivities = statuses.length;
-            
-            // Store this count (should be same for all students)
-            if (!completionCountsInitialized) {
-              totalActivitiesWithCompletion = completionEnabledActivities;
-              completionCountsInitialized = true;
-            }
+            // ✅ FIXED: Track maximum activities seen
+            totalActivitiesWithCompletion = Math.max(
+              totalActivitiesWithCompletion,
+              userVisibleActivities
+            );
 
-            // Count completed activities (state = 1 or 2)
             const completedCount = statuses.filter(
               status => status.state === 1 || status.state === 2
             ).length;
 
-            // ✅ FIX: Calculate percentage based on completion-enabled activities
-            const completionPercentage = completionEnabledActivities > 0
-              ? Math.round((completedCount / completionEnabledActivities) * 100)
-              : 0;
-
-            // Create student data object
-            const studentData = {
-              id: user.id,
-              name: user.fullname,
-              email: user.email || '',
-              username: user.username || '',
-              completedActivities: completedCount,
-              totalActivities: completionEnabledActivities,
-              completionPercentage
-            };
-
-            // Add to appropriate range
-            this.addToRange(ranges, completionPercentage, studentData);
+            userCompletionData.push({
+              user,
+              completedCount,
+              userVisibleActivities
+            });
 
             return true;
 
           } catch (err) {
             console.warn(`   ⚠️  Error for student ${user.fullname}: ${err.message}`);
             
-            // Add student with 0% if API call fails
-            this.addToRange(ranges, 0, {
-              id: user.id,
-              name: user.fullname,
-              email: user.email || '',
-              username: user.username || '',
-              completedActivities: 0,
-              totalActivities: totalActivitiesWithCompletion || 0,
-              completionPercentage: 0,
+            userCompletionData.push({
+              user,
+              completedCount: 0,
+              userVisibleActivities: 0,
               error: true
             });
 
@@ -164,27 +152,51 @@ class ActivityBreakdownService {
         }
       );
 
-      // Sort students within each range by completion % (highest first)
+      console.log(`   📚 Maximum activities with completion tracking: ${totalActivitiesWithCompletion}`);
+
+      // Second pass: categorize users using COURSE total
+      userCompletionData.forEach(({ user, completedCount, userVisibleActivities, error }) => {
+        const completionPercentage = totalActivitiesWithCompletion > 0
+          ? Math.round((completedCount / totalActivitiesWithCompletion) * 100)
+          : 0;
+
+        const studentData = {
+          id: user.id,
+          name: user.fullname,
+          email: user.email || '',
+          username: user.username || '',
+          completedActivities: completedCount,
+          totalActivities: totalActivitiesWithCompletion, // ✅ Use course total
+          userVisibleActivities, // ✅ NEW: Track what user actually sees
+          completionPercentage,
+          displayText: `${completedCount}/${totalActivitiesWithCompletion} activities`,
+          error: error || false
+        };
+
+        // ✅ FIXED: Use COURSE total for range calculation
+        this.addToRange(ranges, completedCount, totalActivitiesWithCompletion, studentData);
+      });
+
+      // Sort students within each range by completion count (highest first)
       Object.values(ranges).forEach(range => {
         range.students.sort(
-          (a, b) => b.completionPercentage - a.completionPercentage
+          (a, b) => b.completedActivities - a.completedActivities
         );
       });
 
-      console.log(`   📚 Activities with completion tracking: ${totalActivitiesWithCompletion}`);
       console.log(`   ✅ Breakdown complete:`);
-      console.log(`      0-20%: ${ranges['0-20'].count} students`);
-      console.log(`      21-40%: ${ranges['21-40'].count} students`);
-      console.log(`      41-60%: ${ranges['41-60'].count} students`);
-      console.log(`      61-80%: ${ranges['61-80'].count} students`);
-      console.log(`      81-100%: ${ranges['81-100'].count} students`);
+      console.log(`      0 completed: ${ranges['0'].count} students`);
+      console.log(`      Low (1-25%): ${ranges['low'].count} students`);
+      console.log(`      Mid (25-50%): ${ranges['mid'].count} students`);
+      console.log(`      High (50-75%): ${ranges['high'].count} students`);
+      console.log(`      Very High (75-99%): ${ranges['veryhigh'].count} students`);
+      console.log(`      All completed: ${ranges['full'].count} students`);
 
       return {
         courseId,
         courseName,
         totalEnrolled: users.length,
         totalActivitiesWithCompletion,
-        groups: courseGroups.map(g => ({ id: g.id, name: g.name })), // ✅ NEW
         completionRanges: ranges
       };
 
@@ -197,27 +209,22 @@ class ActivityBreakdownService {
   /* ---------------- PUBLIC API - ALL COURSES ---------------- */
 
   /**
-   * ✅ FIXED: Get activity completion breakdown for ALL enrolled courses
+   * ✅ Get activity completion breakdown for ALL enrolled courses
    */
   async getAllCoursesCompletionBreakdown(moodleToken, userId) {
     console.log('\n' + '='.repeat(80));
-    console.log('🚀 STARTING ACTIVITY BREAKDOWN FOR ALL COURSES');
+    console.log('🚀 STARTING ACTIVITY BREAKDOWN (Dynamic Activity Count Based)');
     console.log('='.repeat(80));
 
     try {
-      // Get all courses for this user
       const courses = await moodleService.getUserCourses(moodleToken, userId);
       
       console.log(`\n📚 Found ${courses.length} enrolled courses\n`);
 
       const results = [];
       let totalEnrolled = 0;
-      
-      // ✅ FIX: Count students with 60%+ completion as "completed"
-      let totalCompleted60Plus = 0;
-      let totalCompleted80Plus = 0;
+      let totalFullyCompleted = 0;
 
-      // Process each course sequentially
       for (let i = 0; i < courses.length; i++) {
         const course = courses[i];
         
@@ -230,23 +237,14 @@ class ActivityBreakdownService {
             course.fullname
           );
 
-          // Add course metadata
           breakdown.shortname = course.shortname || '';
           breakdown.summary = course.summary || '';
           breakdown.progress = course.progress || 0;
 
           results.push(breakdown);
 
-          // Update totals
           totalEnrolled += breakdown.totalEnrolled;
-          
-          // ✅ FIX: Count 60%+ as "active/completed"
-          totalCompleted60Plus += 
-            breakdown.completionRanges['61-80'].count +
-            breakdown.completionRanges['81-100'].count;
-          
-          totalCompleted80Plus += 
-            breakdown.completionRanges['81-100'].count;
+          totalFullyCompleted += breakdown.completionRanges['full'].count;
 
         } catch (error) {
           console.warn(`   ⚠️  Skipping course ${course.fullname}: ${error.message}`);
@@ -259,25 +257,16 @@ class ActivityBreakdownService {
       console.log(`📊 Summary:`);
       console.log(`   Total Courses Processed: ${results.length}`);
       console.log(`   Total Students Enrolled: ${totalEnrolled}`);
-      console.log(`   Students with 60%+ completion: ${totalCompleted60Plus}`);
-      console.log(`   Students with 80%+ completion: ${totalCompleted80Plus}`);
+      console.log(`   Fully Completed: ${totalFullyCompleted}`);
       console.log('='.repeat(80) + '\n');
 
       return {
         summary: {
           totalCourses: results.length,
           totalEnrolled,
-          
-          // ✅ FIX: Provide multiple completion metrics
-          completed60Plus: totalCompleted60Plus,
-          completed80Plus: totalCompleted80Plus,
-          
-          completionRate60Plus: totalEnrolled > 0 
-            ? parseFloat(((totalCompleted60Plus / totalEnrolled) * 100).toFixed(2))
-            : 0,
-          
-          completionRate80Plus: totalEnrolled > 0 
-            ? parseFloat(((totalCompleted80Plus / totalEnrolled) * 100).toFixed(2))
+          fullyCompleted: totalFullyCompleted,
+          completionRate: totalEnrolled > 0 
+            ? parseFloat(((totalFullyCompleted / totalEnrolled) * 100).toFixed(2))
             : 0
         },
         courses: results,
@@ -285,7 +274,7 @@ class ActivityBreakdownService {
           fetchedAt: new Date().toISOString(),
           fetchedBy: userId,
           batchSize: 20,
-          note: 'Completion percentage based on completion-enabled activities only'
+          note: 'Dynamic activity count based breakdown. Display shows "X/Y activities", ranges determined by completion percentage for logic only.'
         }
       };
 
@@ -298,13 +287,13 @@ class ActivityBreakdownService {
   /* ---------------- OPTIONAL: GET SPECIFIC RANGE ---------------- */
 
   async getStudentsInCourseRange(moodleToken, courseId, rangeKey) {
-    const validRanges = ['0-20', '21-40', '41-60', '61-80', '81-100'];
+    const validRanges = ['0', 'low', 'mid', 'high', 'veryhigh', 'full'];
     
     if (!validRanges.includes(rangeKey)) {
-      throw new Error('Invalid range key. Must be: 0-20, 21-40, 41-60, 61-80, or 81-100');
+      throw new Error('Invalid range key. Must be: 0, low, mid, high, veryhigh, or full');
     }
 
-    console.log(`\n[RANGE QUERY] Course ${courseId}, Range: ${rangeKey}%`);
+    console.log(`\n[RANGE QUERY] Course ${courseId}, Range: ${rangeKey}`);
 
     const breakdown = await this.getSingleCourseCompletionBreakdown(
       moodleToken,
@@ -316,6 +305,7 @@ class ActivityBreakdownService {
       courseId: breakdown.courseId,
       courseName: breakdown.courseName,
       range: rangeKey,
+      rangeLabel: breakdown.completionRanges[rangeKey].label,
       count: breakdown.completionRanges[rangeKey].count,
       students: breakdown.completionRanges[rangeKey].students,
       totalEnrolled: breakdown.totalEnrolled,
