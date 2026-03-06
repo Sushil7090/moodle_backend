@@ -1,4 +1,5 @@
 // server.js
+
 const express = require('express');
 const cors = require('cors');
 const config = require('./config/moodle');
@@ -10,6 +11,9 @@ const analyticsRoutes = require('./routes/analytics'); // ✅ NEW
 // Add imports
 const consistentAccessRoutes = require('./routes/consistentAccess');
 const activityBreakdownRoutes = require('./routes/activityBreakdown');
+const reportRoutes = require('./routes/reports');
+
+
 
 // Initialize Express app
 const app = express();
@@ -66,6 +70,7 @@ app.use('/api/analytics', analyticsRoutes); // ✅ NEW
 // Register routes
 app.use('/api/consistent-access', consistentAccessRoutes);
 app.use('/api/activity-breakdown', activityBreakdownRoutes);
+app.use('/api/reports', reportRoutes);
 
 // 404 handler
 app.use((req, res) => {
